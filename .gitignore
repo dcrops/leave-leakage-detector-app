@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs (keep structure, not data)
+outputs/*
+!outputs/.gitkeep
+
+# Data (sample data only)
+data/*
+!data/sample/
+!data/sample/*.csv
+
+# IDE
+.vscode/
+.idea/
+
+# Packaging artifacts
+*.egg-info/

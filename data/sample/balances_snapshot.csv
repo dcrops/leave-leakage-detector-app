@@ -1,0 +1,5 @@
+employee_id,leave_type,as_of_date,balance_units
+E001,ANNUAL,2024-03-31,143
+E002,ANNUAL,2024-03-31,90
+E003,ANNUAL,2024-03-31,-4
+
