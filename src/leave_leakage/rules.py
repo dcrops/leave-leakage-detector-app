@@ -96,58 +96,63 @@ def rule_event_sign_anomaly(ledger: pd.DataFrame) -> list[Finding]:
         ((ledger["event_type"] == "TAKEN") & (ledger["units"] > 0))
     ].copy()
 
+    if bad.empty:
+        return findings
+
     for _, row in bad.iterrows():
         evidence_str = json.dumps(
-        {
-            "sources": ["leave_ledger.csv"],
-            "primary_keys": {
-                "employee_id": str(row["employee_id"]),
-                "leave_type": str(row["leave_type"]),
-                "event_date": str(row["event_date"].date()) if pd.notna(row["event_date"]) else None,
-            },
-            "values": {
-                "event_type": str(row["event_type"]),
-                "units": float(row["units"]) if pd.notna(row["units"]) else None,
-                "observed_sign": (
-                    "positive" if float(row["units"]) > 0 else "negative"
+            {
+                "sources": ["leave_ledger.csv"],
+                "primary_keys": {
+                    "employee_id": str(row["employee_id"]),
+                    "leave_type": str(row["leave_type"]),
+                    "event_date": str(row["event_date"].date()) if pd.notna(row["event_date"]) else None,
+                },
+                "values": {
+                    "event_type": str(row["event_type"]),
+                    "units": float(row["units"]) if pd.notna(row["units"]) else None,
+                    "observed_sign": (
+                        "positive" if float(row["units"]) > 0 else "negative" if float(row["units"]) < 0 else "zero"
+                    ) if pd.notna(row["units"]) else None,
+                    "expected_sign": "negative" if str(row["event_type"]).upper() == "TAKEN" else "positive",
+                },
+                "thresholds": {
+                    "expected": "TAKEN units < 0, ACCRUAL units > 0"
+                },
+                "explanation": (
+                    f"{str(row['event_type']).upper()} event has unexpected sign."
                 ),
-                "expected_sign": "negative" if str(row["event_type"]).upper() == "TAKEN" else "positive",
             },
-            "thresholds": {
-                "expected": "TAKEN units < 0, ACCRUAL units > 0"
-            },
-            "explanation": (
-                f"{str(row['event_type']).upper()} event has unexpected sign."
-            ),
-        },
-        ensure_ascii=False,
-    )
-
-    findings.append(
-        Finding(
-            employee_id=str(row["employee_id"]),
-            leave_type=str(row["leave_type"]),
-            as_of_date=str(row["event_date"].date()) if pd.notna(row["event_date"]) else None,
-            rule_code="EVENT_SIGN_ANOMALY",
-            severity="MEDIUM",
-            message=f"{row['event_type']} event has unexpected sign ({row['units']}).",
-            evidence=evidence_str,
-            finding_id=compute_finding_id("EVENT_SIGN_ANOMALY", evidence_str),
-            next_action=(
-                    "Review the leave ledger configuration and data ingestion rules to confirm expected sign conventions for TAKEN and ACCRUAL events. "
-                    "Check whether this entry reflects a system configuration issue, import mapping error, or manual adjustment."
-                ),
+            ensure_ascii=False,
         )
-    )
+
+        findings.append(
+            Finding(
+                employee_id=str(row["employee_id"]),
+                leave_type=str(row["leave_type"]),
+                as_of_date=str(row["event_date"].date()) if pd.notna(row["event_date"]) else None,
+                rule_code="EVENT_SIGN_ANOMALY",
+                severity="MEDIUM",
+                message=f"{row['event_type']} event has unexpected sign ({row['units']}).",
+                evidence=evidence_str,
+                finding_id=compute_finding_id("EVENT_SIGN_ANOMALY", evidence_str),
+                next_action=(
+                    "Review the leave ledger configuration and data ingestion rules to confirm expected sign "
+                    "conventions for TAKEN and ACCRUAL events. Check whether this entry reflects a system "
+                    "configuration issue, import mapping error, or manual adjustment."
+                ),
+            )
+        )
 
     return findings
+
 
 def rule_taken_before_start_date(employees: pd.DataFrame, ledger: pd.DataFrame) -> list[Finding]:
     findings: list[Finding] = []
 
     # Create a lookup: employee_id -> start_date
     emp = employees[["employee_id", "start_date"]].copy()
-    emp["start_date"] = pd.to_datetime(emp["start_date"], errors="raise")
+    emp["start_date"] = pd.to_datetime(emp["start_date"], errors="coerce", dayfirst=True)
     start_map = dict(zip(emp["employee_id"].astype(str), emp["start_date"]))
 
     taken = ledger[ledger["event_type"] == "TAKEN"].copy()

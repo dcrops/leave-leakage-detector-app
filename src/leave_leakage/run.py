@@ -28,21 +28,43 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
     data_dir = repo_root / "data" / "sample"
     out_dir = repo_root / "outputs"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    modules_dir = out_dir / "modules"
 
-    employees = pd.read_csv(data_dir / "employees.csv")
-    ledger = pd.read_csv(data_dir / "leave_ledger.csv")
-    snapshot = pd.read_csv(data_dir / "balances_snapshot.csv")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    modules_dir.mkdir(parents=True, exist_ok=True)
+
+    employees = pd.read_csv(
+        data_dir / "employees.csv",
+        dtype={"employee_id": "string"},
+    )
+
+    ledger = pd.read_csv(
+        data_dir / "leave_ledger.csv",
+        dtype={"employee_id": "string", "leave_type": "string", "event_type": "string"},
+    )
+
+    snapshot = pd.read_csv(
+        data_dir / "balances_snapshot.csv",
+        dtype={"employee_id": "string", "leave_type": "string"},
+    )
+
+    for df in (employees, ledger, snapshot):
+        df["employee_id"] = df["employee_id"].astype(str).str.strip()
 
     _require_cols(employees, REQUIRED_EMP, "employees.csv")
     _require_cols(ledger, REQUIRED_LEDGER, "leave_ledger.csv")
     _require_cols(snapshot, REQUIRED_SNAP, "balances_snapshot.csv")
 
     # Parse dates
-    ledger["event_date"] = pd.to_datetime(ledger["event_date"], errors="raise")
-    snapshot["as_of_date"] = pd.to_datetime(snapshot["as_of_date"], errors="raise")
+    ledger["event_date"] = pd.to_datetime(ledger["event_date"], errors="coerce", dayfirst=True)
+    snapshot["as_of_date"] = pd.to_datetime(snapshot["as_of_date"], errors="coerce", dayfirst=True)
 
-        # ----------------------------
+    bad_ledger_dates = ledger["event_date"].isna().sum()
+    bad_snapshot_dates = snapshot["as_of_date"].isna().sum()
+    print(f"[input] Unparseable ledger event_date rows: {bad_ledger_dates}")
+    print(f"[input] Unparseable snapshot as_of_date rows: {bad_snapshot_dates}")
+
+    # ----------------------------
     # Run rules
     # ----------------------------
     findings: list[Finding] = []
@@ -51,7 +73,6 @@ def main() -> int:
     findings.extend(rule_event_sign_anomaly(ledger))
     findings.extend(rule_taken_before_start_date(employees, ledger))
     findings.extend(rule_casual_accrual_present(employees, ledger))
-
 
     # Join ledger to snapshot on employee + leave_type, then keep events up to as_of_date
     merged = snapshot.merge(
@@ -80,10 +101,9 @@ def main() -> int:
 
     findings.extend(rule_balance_mismatch(snapshot, report))
 
-         # ----------------------------
-    # Write findings output
     # ----------------------------
-
+    # Write findings output (module-level)
+    # ----------------------------
     if findings:
         findings_df = pd.DataFrame([f.__dict__ for f in findings])
     else:
@@ -97,20 +117,19 @@ def main() -> int:
                 "message",
                 "diff_units",
                 "evidence",
+                "finding_id",
+                "next_action",
             ]
         )
 
-    findings_path = out_dir / "findings.csv"
+    findings_path = modules_dir / "leave_leakage_findings.csv"
     findings_df.to_csv(findings_path, index=False)
 
-
-        # ----------------------------
-    # Summary output (counts by rule and severity)
+    # ----------------------------
+    # Summary output (counts by rule and severity, module-level)
     # ----------------------------
     if len(findings_df) == 0:
-        summary_df = pd.DataFrame(
-            columns=["rule_code", "severity", "finding_count"]
-        )
+        summary_df = pd.DataFrame(columns=["rule_code", "severity", "finding_count"])
     else:
         summary_df = (
             findings_df.groupby(["rule_code", "severity"], as_index=False)
@@ -119,21 +138,18 @@ def main() -> int:
             .sort_values(["severity", "finding_count"], ascending=[True, False])
         )
 
-    summary_path = out_dir / "summary.csv"
+    summary_path = modules_dir / "leave_leakage_summary.csv"
     summary_df.to_csv(summary_path, index=False)
 
     print(f"Wrote: {findings_path}")
     print(f"Wrote: {summary_path}")
     print(summary_df.to_string(index=False))
 
-
-        # ----------------------------
-    # Summary output (totals by severity)
+    # ----------------------------
+    # Summary output (totals by severity, module-level)
     # ----------------------------
     if len(findings_df) == 0:
-        severity_summary_df = pd.DataFrame(
-            columns=["severity", "finding_count"]
-        )
+        severity_summary_df = pd.DataFrame(columns=["severity", "finding_count"])
     else:
         severity_summary_df = (
             findings_df.groupby("severity", as_index=False)
@@ -142,13 +158,15 @@ def main() -> int:
             .sort_values("finding_count", ascending=False)
         )
 
-    severity_summary_path = out_dir / "summary_by_severity.csv"
+    severity_summary_path = modules_dir / "leave_leakage_summary_by_severity.csv"
     severity_summary_df.to_csv(severity_summary_path, index=False)
 
     print(f"Wrote: {severity_summary_path}")
-    print(severity_summary_df.to_string(index=False))  # optional
+    print(severity_summary_df.to_string(index=False))
 
-
+    # ----------------------------
+    # Detailed leakage reconciliation report (suite-level)
+    # ----------------------------
     tolerance = 0.25  # 15 minutes in hours
     report["risk_flag"] = report["diff_units"].abs() > tolerance
     report["risk_reason"] = report["risk_flag"].map(
@@ -160,7 +178,7 @@ def main() -> int:
 
     print(f"Wrote: {out_path}")
     return 0
-    
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

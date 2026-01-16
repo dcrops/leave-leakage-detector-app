@@ -23,3 +23,8 @@ data/*
 
 # Packaging artifacts
 *.egg-info/
+
+# Output artefacts
+outputs/*
+!outputs/.gitkeep
+
