@@ -1,5 +1,7 @@
 from pathlib import Path
 from reporting.combine_findings import combine_findings
+from reporting.report_md import generate_leave_leakage_report
+from reporting.report_pdf import build_html_and_pdf
 
 
 def main() -> int:
@@ -14,7 +16,20 @@ def main() -> int:
         out_path=outputs / "combined_findings.csv",
     )
 
-    print("Wrote: outputs/combined_findings.csv")
+    # generate Markdown report
+    generate_leave_leakage_report(
+        organisation_name="Example Client Pty Ltd",
+        review_period="1 Jan 2024 – 31 Dec 2024",
+    )
+
+    # HTML + PDF layer
+    build_html_and_pdf()
+
+    print("Wrote outputs/combined_findings.csv")
+    print("Wrote outputs/report.md / report.html / report.pdf")
+
+    print("Wrote outputs/combined_findings.csv")
+    print("Wrote outputs/report.md")
     return 0
 
 
