@@ -6,6 +6,8 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, List, Dict, Optional
 
+report_date = date.today().strftime("%d %b %Y")
+
 
 # ---------- Paths ----------
 
@@ -111,7 +113,7 @@ def build_header(organisation_name: str, review_period: str) -> str:
 
 **Organisation:** {organisation_name}  
 **Review period:** {review_period}  
-**Report date:** {today_str}  
+**Report date:** {report_date}  
 
 > This report identifies potential leave and entitlement leakage based on the data provided. It highlights potential compliance risks and process issues but does not constitute legal or industrial relations advice.
 
