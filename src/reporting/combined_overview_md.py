@@ -43,11 +43,18 @@ def _load_csv(path: Path) -> List[Dict[str, str]]:
 def _normalise_sev(s: str) -> str:
     return (s or "").strip().upper()
 
+def _counts_from_rows(rows: List[Dict[str, str]]) -> SevCounts:
+    c = Counter(_normalise_sev(r.get("severity", "")) for r in rows)
+    return SevCounts(
+        high=c.get("HIGH", 0),
+        medium=c.get("MEDIUM", 0),
+        low=c.get("LOW", 0),
+    )
+
 
 def _counts_from_findings_csv(path: Path) -> SevCounts:
     rows = _load_csv(path)
-    c = Counter(_normalise_sev(r.get("severity", "")) for r in rows)
-    return SevCounts(high=c.get("HIGH", 0), medium=c.get("MEDIUM", 0), low=c.get("LOW", 0))
+    return _counts_from_rows(rows)
 
 
 def _counts_from_leave_summary_by_sev(path: Path) -> SevCounts:
@@ -85,14 +92,53 @@ def _counts_from_leave_summary_by_sev(path: Path) -> SevCounts:
 
     return SevCounts(high=counts["HIGH"], medium=counts["MEDIUM"], low=counts["LOW"])
 
-
-def _top_rules(path: Path, top_n: int = 3) -> List[Tuple[str, int]]:
-    rows = _load_csv(path)
+def _top_rules_from_rows(rows: List[Dict[str, str]], top_n: int = 3) -> List[Tuple[str, int]]:
     if not rows:
         return []
     c = Counter((r.get("rule_code") or r.get("rule_id") or "UNSPECIFIED").strip() for r in rows)
     return c.most_common(top_n)
 
+def _top_rules(path: Path, top_n: int = 3) -> List[Tuple[str, int]]:
+    rows = _load_csv(path)
+    return _top_rules_from_rows(rows, top_n=top_n)
+
+def _load_deduped_lsl_rows() -> List[Dict[str, str]]:
+    """
+    Load LSL findings and apply the same deduplication logic used in the LSL report:
+    - Remove MEDIUM 'LSL_BALANCE_SUSPICIOUSLY_LOW' findings where the same employee
+      already has a HIGH 'LSL_ZERO_BALANCE_FOR_LONG_TENURE' finding.
+    """
+    rows = _load_csv(LSL_FINDINGS)
+    if not rows:
+        return []
+
+    # Identify employees with the high-severity zero-balance rule
+    employees_with_high_zero = set()
+    for r in rows:
+        rule = (r.get("rule_code") or r.get("rule_id") or "").strip()
+        sev = _normalise_sev(r.get("severity", ""))
+        if rule == "LSL_ZERO_BALANCE_FOR_LONG_TENURE" and sev == "HIGH":
+            emp = (r.get("employee_id") or "").strip()
+            if emp:
+                employees_with_high_zero.add(emp)
+
+    deduped: List[Dict[str, str]] = []
+    for r in rows:
+        rule = (r.get("rule_code") or r.get("rule_id") or "").strip()
+        sev = _normalise_sev(r.get("severity", ""))
+        emp = (r.get("employee_id") or "").strip()
+
+        if (
+            emp in employees_with_high_zero
+            and rule == "LSL_BALANCE_SUSPICIOUSLY_LOW"
+            and sev == "MEDIUM"
+        ):
+            # Skip this one – it's effectively covered by the HIGH finding
+            continue
+
+        deduped.append(r)
+
+    return deduped
 
 def generate_combined_exposure_overview(
     organisation_name: str = "Organisation not specified",
@@ -109,11 +155,12 @@ def generate_combined_exposure_overview(
     if leave_counts.total == 0:
         leave_counts = _counts_from_findings_csv(LEAVE_FINDINGS)
 
-    # LSL counts: parse findings (simple + reliable)
-    lsl_counts = _counts_from_findings_csv(LSL_FINDINGS)
+    # LSL counts: use the same deduplicated logic as the LSL report
+    lsl_rows = _load_deduped_lsl_rows()
+    lsl_counts = _counts_from_rows(lsl_rows)
 
     leave_top = _top_rules(LEAVE_FINDINGS, top_n=3)
-    lsl_top = _top_rules(LSL_FINDINGS, top_n=3)
+    lsl_top = _top_rules_from_rows(lsl_rows, top_n=3)
 
     md = f"""# Combined Exposure Overview
 

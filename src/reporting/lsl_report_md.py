@@ -109,6 +109,21 @@ def dedupe_lsl_findings(findings: List[LSLFinding]) -> List[LSLFinding]:
 
     return deduped
 
+def sort_lsl_findings(findings: List[LSLFinding]) -> List[LSLFinding]:
+    """
+    Sort findings by severity (HIGH → MEDIUM → LOW), then rule_code, then employee_id.
+    """
+    severity_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    return sorted(
+        findings,
+        key=lambda f: (
+            severity_rank.get(f.severity, 99),
+            f.rule_code or "",
+            f.employee_id or "",
+        ),
+    )
+
+
 def load_lsl_exposure_rows() -> List[LSLExposureRow]:
     rows = _load_csv(LSL_EXPOSURE_CSV)
     exposure_rows: List[LSLExposureRow] = []
@@ -198,6 +213,40 @@ def build_lsl_key_findings_overview(findings: List[LSLFinding]) -> str:
     med = sum(1 for f in findings if f.severity == "MEDIUM")
     low = sum(1 for f in findings if f.severity == "LOW")
 
+    # Build per-rule summary (counts + severity mix)
+    rule_summary_lines: List[str] = []
+    if findings:
+        rule_counts: Dict[str, Dict[str, int]] = {}
+
+        for f in findings:
+            code = f.rule_code or "UNSPECIFIED_RULE"
+            if code not in rule_counts:
+                rule_counts[code] = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "TOTAL": 0}
+
+            if f.severity in ("HIGH", "MEDIUM", "LOW"):
+                rule_counts[code][f.severity] += 1
+            rule_counts[code]["TOTAL"] += 1
+
+        rule_summary_lines.append("")
+        rule_summary_lines.append("**Finding types (by rule)**")
+        rule_summary_lines.append("")
+        rule_summary_lines.append(
+            "This table summarises how many findings were raised for each rule and the mix of severities."
+        )
+        rule_summary_lines.append("")
+        rule_summary_lines.append("| Rule code | Count | Severity mix (H/M/L) |")
+        rule_summary_lines.append("|----------|-------|----------------------|")
+
+        for code in sorted(rule_counts.keys()):
+            h = rule_counts[code]["HIGH"]
+            m = rule_counts[code]["MEDIUM"]
+            l = rule_counts[code]["LOW"]
+            total = rule_counts[code]["TOTAL"]
+            mix = f"{h}H / {m}M / {l}L"
+            rule_summary_lines.append(f"| `{code}` | {total} | {mix} |")
+
+    rule_summary = "\n".join(rule_summary_lines)
+
     return f"""## 3. Key Findings Overview
 
 The automated checks identified the following potential issues in LSL balances and related data:
@@ -208,8 +257,11 @@ The automated checks identified the following potential issues in LSL balances a
 | Medium  | {med}   | Material inconsistency or configuration issue |
 | Low     | {low}   | Data quality or minor process issue |
 
+{rule_summary}
+
 ---
 """
+
 
 
 def build_lsl_detailed_findings(findings: List[LSLFinding]) -> str:
@@ -235,13 +287,15 @@ No LSL-related findings were identified for the supplied data.
         lines.append(f"{f.message or 'No description provided.'}")
         lines.append("")
         lines.append("**Evidence**")
+        lines.append("")  # ensure bullets render as a proper list
 
         evidence_bits: List[str] = []
         if f.employee_id:
             evidence_bits.append(f"Employee ID: `{f.employee_id}`")
 
         if evidence_bits:
-            lines.append("- " + "\n- ".join(evidence_bits))
+            for bit in evidence_bits:
+                lines.append(f"- {bit}")
         else:
             lines.append("- Not specified in the source data.")
 
@@ -254,11 +308,18 @@ No LSL-related findings were identified for the supplied data.
         )
         lines.append("")
         lines.append("**Recommended Action**")
+        lines.append("")  # blank line so the list renders properly
+
         lines.append(
-            "- Review the underlying LSL balance, service history and entitlement settings for the affected employee(s).\n"
-            "- Confirm whether the balance aligns with applicable legislation, awards or agreements.\n"
+            "- Review the underlying LSL balance, service history and entitlement settings for the affected employee(s)."
+        )
+        lines.append(
+            "- Confirm whether the balance aligns with applicable legislation, awards or agreements."
+        )
+        lines.append(
             "- Correct any confirmed configuration or data issues and assess whether broader remediation is required."
         )
+
         lines.append("")
 
     lines.append("---")
@@ -364,7 +425,8 @@ def generate_lsl_exposure_report(
 ) -> Path:
     """Generate outputs/lsl_report.md for the LSL Exposure Review."""
     raw_findings = load_lsl_findings()
-    findings = dedupe_lsl_findings(raw_findings)
+    deduped_findings = dedupe_lsl_findings(raw_findings)
+    findings = sort_lsl_findings(deduped_findings)
     exposure_rows = load_lsl_exposure_rows()
 
     parts = [

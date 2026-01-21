@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, List, Dict, Optional
 
+
 report_date = date.today().strftime("%d %b %Y")
 
 
@@ -104,6 +105,19 @@ def load_exposure_rows() -> List[ExposureRow]:
             exposure_rows.append(er)
     return exposure_rows
 
+def sort_findings(findings: List[Finding]) -> List[Finding]:
+    """Sort findings by severity (HIGH→MEDIUM→LOW), then rule_code, then employee/date."""
+    severity_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    return sorted(
+        findings,
+        key=lambda f: (
+            severity_rank.get(f.severity, 99),
+            f.rule_code or "",
+            f.employee_id or "",
+            f.as_of_date or "",
+        ),
+    )
+
 
 # ---------- Markdown section builders ----------
 
@@ -186,6 +200,38 @@ def build_key_findings_overview(findings: List[Finding]) -> str:
     med = sum(1 for f in findings if f.severity == "MEDIUM")
     low = sum(1 for f in findings if f.severity == "LOW")
 
+    # Build per-rule summary (counts + severity mix)
+    rule_summary_lines: List[str] = []
+    if findings:
+        rule_counts: Dict[str, Dict[str, int]] = {}
+
+        for f in findings:
+            code = f.rule_code or "UNSPECIFIED_RULE"
+            if code not in rule_counts:
+                rule_counts[code] = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "TOTAL": 0}
+
+            if f.severity in ("HIGH", "MEDIUM", "LOW"):
+                rule_counts[code][f.severity] += 1
+            rule_counts[code]["TOTAL"] += 1
+
+        rule_summary_lines.append("")
+        rule_summary_lines.append("**Finding types (by rule)**")
+        rule_summary_lines.append("")
+        rule_summary_lines.append("This table summarises how many findings were raised for each rule and the mix of severities.")
+        rule_summary_lines.append("")
+        rule_summary_lines.append("| Rule code | Count | Severity mix (H/M/L) |")
+        rule_summary_lines.append("|----------|-------|----------------------|")
+
+        for code in sorted(rule_counts.keys()):
+            h = rule_counts[code]["HIGH"]
+            m = rule_counts[code]["MEDIUM"]
+            l = rule_counts[code]["LOW"]
+            total = rule_counts[code]["TOTAL"]
+            mix = f"{h}H / {m}M / {l}L"
+            rule_summary_lines.append(f"| `{code}` | {total} | {mix} |")
+
+    rule_summary = "\n".join(rule_summary_lines)
+
     return f"""## 3. Key Findings Overview
 
 The automated checks identified the following potential issues:
@@ -196,8 +242,11 @@ The automated checks identified the following potential issues:
 | Medium  | {med}   | Material risk or policy inconsistency         |
 | Low     | {low}   | Data quality or process issue                 |
 
+{rule_summary}
+
 ---
 """
+
 
 
 def build_detailed_findings(findings: List[Finding]) -> str:
@@ -223,6 +272,8 @@ No findings were identified for the supplied data.
         lines.append(f"{f.message or 'No description provided.'}")
         lines.append("")
         lines.append("**Evidence**")
+        lines.append("")  # ensure bullets render as a proper list
+
         evidence_bits = []
         if f.employee_id:
             evidence_bits.append(f"Employee ID: `{f.employee_id}`")
@@ -243,11 +294,15 @@ No findings were identified for the supplied data.
         )
         lines.append("")
         lines.append("**Recommended Action**")
+        lines.append("")  # blank line so the list renders properly
+
         lines.append(
-            "- Validate this finding against source payroll records and employee entitlements.\n"
-            "- Correct any confirmed configuration or process issues.\n"
-            "- Consider remediation where underpayments are confirmed."
-        )
+            "- Validate this finding against source payroll records and employee entitlements.")
+        lines.append(
+            "- Correct any confirmed configuration or process issues.")
+        lines.append(
+            "- Consider remediation where underpayments are confirmed.")
+
         lines.append("")
     lines.append("---")
     lines.append("")
@@ -353,14 +408,15 @@ def generate_leave_leakage_report(
 ) -> Path:
     """Generate outputs/report.md for the Leave & Entitlement Leakage Review."""
     findings = load_findings()
+    sorted_findings = sort_findings(findings)
     exposure_rows = load_exposure_rows()
 
     parts = [
         build_header(organisation_name, review_period),
-        build_executive_summary(findings),
+        build_executive_summary(sorted_findings),
         build_scope_and_methodology(),
-        build_key_findings_overview(findings),
-        build_detailed_findings(findings),
+        build_key_findings_overview(sorted_findings),
+        build_detailed_findings(sorted_findings),
         build_financial_exposure_section(exposure_rows),
         build_limitations(),
         build_next_steps(),
