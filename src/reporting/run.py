@@ -5,6 +5,8 @@ from reporting.report_md import generate_leave_leakage_report
 from reporting.report_pdf import build_html_and_pdf
 from reporting.lsl_report_md import generate_lsl_exposure_report
 from reporting.combined_overview_md import generate_combined_exposure_overview
+from reporting.pre_audit_overview_md import generate_pre_audit_overview
+from reporting.post_audit_overview_md import generate_post_audit_overview
 
 
 def main() -> int:
@@ -21,20 +23,29 @@ def main() -> int:
 
     # generate Markdown report
     generate_leave_leakage_report(
-        organisation_name="Example Client Pty Ltd",
-        review_period = f"Report prepared as at {date.today():%d %b %Y}",
+        organisation_name="Example Client Pty Ltd"
     )
 
     generate_lsl_exposure_report(
     organisation_name="Example Client Pty Ltd",
-    review_period = f"Report prepared as at {date.today():%d %b %Y}",
-    )
+)
 
     generate_combined_exposure_overview(
     organisation_name="Example Client Pty Ltd",
     # leave as None to be dynamic:
     prepared_as_at=None,
     )
+
+    generate_pre_audit_overview(
+    organisation_name="Example Client Pty Ltd",
+    prepared_as_at=None,
+    )
+
+    generate_post_audit_overview(
+    organisation_name="Example Client Pty Ltd",
+    prepared_as_at=None,
+    )
+
 
         # HTML layer (PDF is best-effort on Windows)
     # Leave & Entitlement Leakage report
@@ -60,10 +71,29 @@ def main() -> int:
     page_title="Combined Exposure Overview",
     )
 
+        # Pre-Audit overview
+    build_html_and_pdf(
+        md_path=outputs / "pre_audit_overview.md",
+        html_path=outputs / "pre_audit_overview.html",
+        pdf_path=outputs / "pre_audit_overview.pdf",
+        page_title="Pre-Audit Payroll Compliance Review",
+    )
+
+    # Post-Audit overview
+    build_html_and_pdf(
+        md_path=outputs / "post_audit_overview.md",
+        html_path=outputs / "post_audit_overview.html",
+        pdf_path=outputs / "post_audit_overview.pdf",
+        page_title="Post-Audit Payroll Compliance Review",
+    )
+
+
     print("Wrote outputs/combined_findings.csv")
     print("Wrote outputs/report.md / report.html")
     print("Wrote outputs/lsl_report.md / lsl_report.html")
     print("Wrote outputs/combined_overview.md / combined_overview.html")
+    print("Wrote outputs/pre_audit_overview.md / pre_audit_overview.html")
+    print("Wrote outputs/post_audit_overview.md / post_audit_overview.html")
     # PDFs are best-effort; they may or may not exist depending on WeasyPrint setup.
     return 0
 

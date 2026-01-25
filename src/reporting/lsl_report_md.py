@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -78,10 +78,50 @@ def _load_csv(path: Path) -> List[Dict[str, str]]:
         reader = csv.DictReader(f)
         return list(reader)
 
+def _derive_review_period_from_data(paths: list[Path]) -> str:
+    """
+    Try to derive a review period (min → max date) from one or more CSV files.
+
+    We look for columns whose names contain 'date' and try common date formats.
+    If we can't find anything usable, we fall back to 'Report prepared as at ...'.
+    """
+    all_dates: list[date] = []
+
+    for path in paths:
+        if not path.exists():
+            continue
+
+        with path.open("r", newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                for col, raw in row.items():
+                    if not col or "date" not in col.lower():
+                        continue
+                    value = (raw or "").strip()
+                    if not value:
+                        continue
+
+                    # Try a few common formats
+                    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                        try:
+                            d = datetime.strptime(value, fmt).date()
+                            all_dates.append(d)
+                            break
+                        except ValueError:
+                            continue
+
+    if all_dates:
+        start = min(all_dates)
+        end = max(all_dates)
+        return f"{start:%d %b %Y} to {end:%d %b %Y}"
+
+    # Fallback if no dates found
+    return f"Report prepared as at {date.today():%d %b %Y}"
 
 def load_lsl_findings() -> List[LSLFinding]:
     rows = _load_csv(LSL_FINDINGS_CSV)
     return [LSLFinding.from_row(r) for r in rows]
+
 
 def dedupe_lsl_findings(findings: List[LSLFinding]) -> List[LSLFinding]:
     """
@@ -109,6 +149,7 @@ def dedupe_lsl_findings(findings: List[LSLFinding]) -> List[LSLFinding]:
 
     return deduped
 
+
 def sort_lsl_findings(findings: List[LSLFinding]) -> List[LSLFinding]:
     """
     Sort findings by severity (HIGH → MEDIUM → LOW), then rule_code, then employee_id.
@@ -134,15 +175,67 @@ def load_lsl_exposure_rows() -> List[LSLExposureRow]:
     return exposure_rows
 
 
+# ---------- Review period helpers ----------
+
+def _parse_iso_date(s: str | None) -> Optional[date]:
+    """Parse a simple YYYY-MM-DD string into a date, or return None."""
+    if not s:
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def _collect_dates_from_csv(path: Path, field_names: List[str]) -> List[date]:
+    """
+    Collect all valid dates from a CSV for the given list of candidate date fields.
+    """
+    rows = _load_csv(path)
+    dates: List[date] = []
+    for r in rows:
+        for field in field_names:
+            if field in r and r[field]:
+                d = _parse_iso_date(r[field])
+                if d is not None:
+                    dates.append(d)
+    return dates
+
+
+def _derive_lsl_review_period() -> str:
+    """
+    Derive a human-readable review period for the LSL report by scanning
+    the LSL findings and exposure CSVs for common date fields.
+    """
+    dates: List[date] = []
+
+    # Typical candidates; harmless to include extras if absent
+    dates += _collect_dates_from_csv(LSL_FINDINGS_CSV, ["as_of_date", "snapshot_date", "period_start", "period_end"])
+    dates += _collect_dates_from_csv(LSL_EXPOSURE_CSV, ["as_of_date", "snapshot_date", "period_start", "period_end"])
+
+    if not dates:
+        return "Period not specified"
+
+    start = min(dates)
+    end = max(dates)
+
+    if start == end:
+        return start.strftime("%d %b %Y")
+
+    return f"{start.strftime('%d %b %Y')} to {end.strftime('%d %b %Y')}"
+
+
 # ---------- Markdown section builders ----------
 
 def build_lsl_header(organisation_name: str, review_period: str) -> str:
-    today_str = date.today().isoformat()
     return f"""# Long Service Leave (LSL) Exposure Review
 
 **Organisation:** {organisation_name}  
 **Review period:** {review_period}  
-**Report date:** {report_date}  
+**Report prepared as at:** {report_date}  
 
 > This review provides an indicative view of Long Service Leave (LSL) exposure based on the data provided. It highlights potential areas of risk and imbalance but does not constitute legal, accounting or industrial relations advice.
 
@@ -181,9 +274,32 @@ This report is intended to support payroll and finance teams in understanding LS
 ---
 """
 
+def build_lsl_data_sources_section() -> str:
+    lines: list[str] = [
+        "## 2. Data sources",
+        "",
+        "This review is based on the following data extracts (relative to the `outputs/` folder):",
+        "",
+        f"- `modules/{LSL_FINDINGS_CSV.name}` – rule-based LSL findings",
+    ]
+
+    if LSL_EXPOSURE_CSV.exists():
+        lines.append(
+            f"- `{LSL_EXPOSURE_CSV.name}` – indicative LSL exposure by rule or bucket"
+        )
+
+    lines += [
+        "",
+        "> These files are generated by the Long Service Leave exposure tool as part of the batch run.",
+        "",
+        "---",
+        "",
+    ]
+    return "\n".join(lines)
+
 
 def build_lsl_scope_and_methodology() -> str:
-    return """## 2. Scope & Methodology
+    return """## 3. Scope & Methodology
 
 **Data reviewed**
 
@@ -247,7 +363,7 @@ def build_lsl_key_findings_overview(findings: List[LSLFinding]) -> str:
 
     rule_summary = "\n".join(rule_summary_lines)
 
-    return f"""## 3. Key Findings Overview
+    return f"""## 4. Key Findings Overview
 
 The automated checks identified the following potential issues in LSL balances and related data:
 
@@ -263,17 +379,16 @@ The automated checks identified the following potential issues in LSL balances a
 """
 
 
-
 def build_lsl_detailed_findings(findings: List[LSLFinding]) -> str:
     if not findings:
-        return """## 4. Detailed Findings
+        return """## 5. Detailed Findings
 
 No LSL-related findings were identified for the supplied data.
 
 ---
 """
 
-    lines: List[str] = ["## 4. Detailed Findings", ""]
+    lines: List[str] = ["## 5. Detailed Findings", ""]
     lines.append(
         "Each finding below follows a consistent **Finding → Evidence → Impact / Risk → Recommended Action** pattern."
     )
@@ -329,7 +444,7 @@ No LSL-related findings were identified for the supplied data.
 
 def build_lsl_exposure_section(exposure_rows: List[LSLExposureRow]) -> str:
     if not exposure_rows:
-        return """## 5. Financial Exposure (Indicative)
+        return """## 6. Financial Exposure (Indicative)
 
 No LSL exposure estimates were available from the current data extract. If required, aggregated LSL exposure figures can be added to this section in future runs.
 
@@ -338,7 +453,7 @@ No LSL exposure estimates were available from the current data extract. If requi
 
     total = sum(r.amount for r in exposure_rows)
     lines = [
-        "## 5. Financial Exposure (Indicative)",
+        "## 6. Financial Exposure (Indicative)",
         "",
         f"- Number of exposure rows: {len(exposure_rows)}",
         f"- Indicative total LSL exposure (all categories): {total:,.2f}",
@@ -353,7 +468,7 @@ No LSL exposure estimates were available from the current data extract. If requi
 
 
 def build_lsl_limitations() -> str:
-    return """## 6. Limitations & Assumptions
+    return """## 7. Limitations & Assumptions
 
 This review is subject to the following limitations:
 
@@ -369,7 +484,7 @@ This report is intended to support internal review and prioritisation and should
 
 
 def build_lsl_next_steps() -> str:
-    return """## 7. Recommended Next Steps
+    return """## 8. Recommended Next Steps
 
 1. Prioritise review of **High** severity findings affecting LSL balances or exposure.
 2. Validate affected employee records, including service history and entitlement calculations.
@@ -382,7 +497,7 @@ def build_lsl_next_steps() -> str:
 
 
 def build_lsl_appendices() -> str:
-    return """## 8. Appendix A – Rule Definitions
+    return """## 9. Appendix A – Rule Definitions
 
 This review used a set of automated rules to flag potential LSL exposure and imbalance. Examples include:
 
@@ -394,7 +509,7 @@ This review used a set of automated rules to flag potential LSL exposure and imb
 
 ---
 
-## 9. Appendix B – Data Fields Used
+## 10. Appendix B – Data Fields Used
 
 Key fields used in this analysis include:
 
@@ -408,7 +523,7 @@ Key fields used in this analysis include:
 
 ---
 
-## 10. Appendix C – Full Findings Table
+## 11. Appendix C – Full Findings Table
 
 A complete machine-readable version of the LSL findings is available in:
 
@@ -419,9 +534,15 @@ A complete machine-readable version of the LSL findings is available in:
 
 # ---------- Orchestrator ----------
 
+from typing import Optional
+from datetime import date
+
+# ... keep the rest of the file as-is above ...
+
+
 def generate_lsl_exposure_report(
     organisation_name: str = "Organisation not specified",
-    review_period: str = "Period not specified",
+    review_period: Optional[str] = None,
 ) -> Path:
     """Generate outputs/lsl_report.md for the LSL Exposure Review."""
     raw_findings = load_lsl_findings()
@@ -429,9 +550,16 @@ def generate_lsl_exposure_report(
     findings = sort_lsl_findings(deduped_findings)
     exposure_rows = load_lsl_exposure_rows()
 
+    # If not explicitly supplied, derive review period from the data
+    if review_period is None:
+        review_period = _derive_review_period_from_data(
+            [LSL_FINDINGS_CSV, LSL_EXPOSURE_CSV]
+        )
+
     parts = [
         build_lsl_header(organisation_name, review_period),
         build_lsl_executive_summary(findings),
+        build_lsl_data_sources_section(),
         build_lsl_scope_and_methodology(),
         build_lsl_key_findings_overview(findings),
         build_lsl_detailed_findings(findings),
@@ -444,6 +572,7 @@ def generate_lsl_exposure_report(
     LSL_REPORT_MD_PATH.parent.mkdir(parents=True, exist_ok=True)
     LSL_REPORT_MD_PATH.write_text("\n".join(parts), encoding="utf-8")
     return LSL_REPORT_MD_PATH
+
 
 
 if __name__ == "__main__":

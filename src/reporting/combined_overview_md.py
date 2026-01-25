@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -140,15 +140,91 @@ def _load_deduped_lsl_rows() -> List[Dict[str, str]]:
 
     return deduped
 
+def _extract_dates_from_csv(path: Path) -> List[date]:
+    """
+    Scan a CSV for columns containing 'date' in the header and try to parse
+    ISO-style values (YYYY-MM-DD) into datetime.date objects.
+    """
+    rows = _load_csv(path)
+    dates: List[date] = []
+
+    for r in rows:
+        for col, value in r.items():
+            if "date" not in (col or "").lower():
+                continue
+            s = (str(value) or "").strip()
+            if not s:
+                continue
+            try:
+                # prefer plain date.fromisoformat if it's in YYYY-MM-DD form
+                d = date.fromisoformat(s)
+            except ValueError:
+                try:
+                    # fallback: try a generic datetime parser then take .date()
+                    d = datetime.fromisoformat(s).date()
+                except Exception:
+                    continue
+            dates.append(d)
+
+    return dates
+
+
+def _derive_review_period(paths: List[Path]) -> tuple[date | None, date | None]:
+    """
+    Look across multiple CSVs and return (min_date, max_date) based on
+    any '...date...' columns we can parse.
+    """
+    all_dates: List[date] = []
+    for p in paths:
+        if p.exists():
+            all_dates.extend(_extract_dates_from_csv(p))
+
+    if not all_dates:
+        return None, None
+
+    all_dates.sort()
+    return all_dates[0], all_dates[-1]
+
+
+def _format_review_period(start: date | None, end: date | None) -> str:
+    """
+    Pretty-print the review period:
+
+    - if start == end or only one date → 'As at DD Mon YYYY'
+    - if both differ → 'DD Mon YYYY to DD Mon YYYY'
+    - if nothing found → 'Not specified'
+    """
+    if start is None and end is None:
+        return "Not specified"
+
+    if start is None:
+        start = end
+    if end is None:
+        end = start
+
+    if start == end:
+        return f"As at {start:%d %b %Y}"
+
+    return f"{start:%d %b %Y} to {end:%d %b %Y}"
+
 def generate_combined_exposure_overview(
     organisation_name: str = "Organisation not specified",
     prepared_as_at: str | None = None,
+    review_period: str | None = None,
 ) -> Path:
     """
     Creates outputs/combined_overview.md (exec-friendly summary referencing the detailed reports).
+
+    - prepared_as_at: free-text date label (defaults to today's date)
+    - review_period: if None, inferred from leave + LSL findings date columns
     """
     if prepared_as_at is None:
         prepared_as_at = f"{date.today():%d %b %Y}"
+
+    # --- derive review period from leave + LSL findings if not provided ---
+    if review_period is None:
+        start, end = _derive_review_period([LEAVE_FINDINGS, LSL_FINDINGS])
+        review_period = _format_review_period(start, end)
 
     # Leave counts: prefer summary_by_severity if available; else parse findings
     leave_counts = _counts_from_leave_summary_by_sev(LEAVE_SUMMARY_BY_SEV)
@@ -165,8 +241,8 @@ def generate_combined_exposure_overview(
     md = f"""# Combined Exposure Overview
 
 **Organisation:** {organisation_name}  
-**Prepared as at:** {prepared_as_at}  
-**Report date:** {report_date}  
+**Review period:** {review_period}  
+**Report prepared as at:** {prepared_as_at}  
 
 > This overview summarises key exposure signals identified across payroll compliance modules. It is intended to support prioritisation and internal discussion. It does not constitute legal, accounting, or industrial relations advice.
 
@@ -183,7 +259,18 @@ Use this overview to support prioritisation of follow-up work. Refer to the deta
 
 ---
 
-## 2. Exposure Snapshot
+## 2. Data sources & coverage
+
+This combined overview is based on module outputs generated in the same run:
+
+- `outputs/modules/leave_leakage_findings.csv`
+- `outputs/modules/lsl_findings.csv`
+
+For each module, refer to its detailed report for a description of the upstream payroll and HR data used.
+
+---
+
+## 3. Exposure Snapshot
 
 | Module | High | Medium | Low | Total |
 |---|---:|---:|---:|---:|
@@ -198,17 +285,17 @@ Use this overview to support prioritisation of follow-up work. Refer to the deta
 
 ---
 
-## 3. Key Themes (Top signals)
+## 4. Key Themes (Top signals)
 
 ### Leave & Entitlement Leakage (Top rules)
-{_format_top_rules(leave_top)}
+{_format_top_rules(leave_top, total=leave_counts.total)}
 
 ### Long Service Leave (LSL) Exposure (Top rules)
-{_format_top_rules(lsl_top)}
+{_format_top_rules(lsl_top, total=lsl_counts.total)}
 
 ---
 
-## 4. Recommended Next Steps
+## 5. Recommended Next Steps
 
 1. Prioritise review of **High** severity findings across both modules.
 2. For confirmed issues, identify root causes (configuration, process, data, policy).
@@ -217,7 +304,7 @@ Use this overview to support prioritisation of follow-up work. Refer to the deta
 
 ---
 
-## 5. Detailed Reports
+## 6. Detailed Reports
 
 Full detail, evidence and recommended actions are available in:
 
@@ -232,11 +319,19 @@ Full detail, evidence and recommended actions are available in:
     OUT_MD.write_text(md, encoding="utf-8")
     return OUT_MD
 
-
-def _format_top_rules(items: List[Tuple[str, int]]) -> str:
+def _format_top_rules(items: List[Tuple[str, int]], total: int | None = None) -> str:
     if not items:
         return "- No findings available."
-    return "\n".join([f"- `{rule}` — {count}" for rule, count in items])
+
+    lines = [f"- `{rule}` — {count}" for rule, count in items]
+
+    if total is not None:
+        shown = sum(count for _, count in items)
+        remaining = total - shown
+        if remaining > 0:
+            lines.append(f"- Other rules (combined) — {remaining}")
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

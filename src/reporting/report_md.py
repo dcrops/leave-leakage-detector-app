@@ -6,9 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, List, Dict, Optional
 
-
 report_date = date.today().strftime("%d %b %Y")
-
 
 # ---------- Paths ----------
 
@@ -105,6 +103,7 @@ def load_exposure_rows() -> List[ExposureRow]:
             exposure_rows.append(er)
     return exposure_rows
 
+
 def sort_findings(findings: List[Finding]) -> List[Finding]:
     """Sort findings by severity (HIGH→MEDIUM→LOW), then rule_code, then employee/date."""
     severity_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
@@ -119,15 +118,52 @@ def sort_findings(findings: List[Finding]) -> List[Finding]:
     )
 
 
+# ---------- Review period helpers ----------
+
+def _parse_iso_date(s: str | None) -> Optional[date]:
+    """Parse a simple YYYY-MM-DD string into a date, or return None."""
+    if not s:
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def _derive_review_period(findings: List[Finding]) -> str:
+    """
+    Derive a human-readable review period from the findings' as_of_date values.
+    Uses the earliest and latest valid dates found.
+    """
+    dates: List[date] = []
+    for f in findings:
+        d = _parse_iso_date(f.as_of_date)
+        if d is not None:
+            dates.append(d)
+
+    if not dates:
+        return "Period not specified"
+
+    start = min(dates)
+    end = max(dates)
+
+    if start == end:
+        return start.strftime("%d %b %Y")
+
+    return f"{start.strftime('%d %b %Y')} to {end.strftime('%d %b %Y')}"
+
+
 # ---------- Markdown section builders ----------
 
 def build_header(organisation_name: str, review_period: str) -> str:
-    today_str = date.today().isoformat()
     return f"""# Leave & Entitlement Leakage Review
 
 **Organisation:** {organisation_name}  
 **Review period:** {review_period}  
-**Report date:** {report_date}  
+**Report prepared as at:** {report_date}  
 
 > This report identifies potential leave and entitlement leakage based on the data provided. It highlights potential compliance risks and process issues but does not constitute legal or industrial relations advice.
 
@@ -168,8 +204,22 @@ This report is intended for payroll managers and related stakeholders responsibl
 """
 
 
+def build_data_sources_section() -> str:
+    return f"""## 2. Data sources
+
+This review was generated from the following analysis outputs within the project `outputs/` directory:
+
+- `{LEAVE_FINDINGS_CSV.relative_to(OUTPUTS_DIR)}`  
+- `{LEAKAGE_REPORT_CSV.relative_to(OUTPUTS_DIR)}`  
+
+These outputs were produced by the Leave & Entitlement Leakage engine from payroll and HR CSV extracts supplied by the organisation for the review period.
+
+---
+"""
+
+
 def build_scope_and_methodology() -> str:
-    return """## 2. Scope & Methodology
+    return """## 3. Scope & Methodology
 
 **Data reviewed**
 
@@ -232,7 +282,7 @@ def build_key_findings_overview(findings: List[Finding]) -> str:
 
     rule_summary = "\n".join(rule_summary_lines)
 
-    return f"""## 3. Key Findings Overview
+    return f"""## 4. Key Findings Overview
 
 The automated checks identified the following potential issues:
 
@@ -248,17 +298,16 @@ The automated checks identified the following potential issues:
 """
 
 
-
 def build_detailed_findings(findings: List[Finding]) -> str:
     if not findings:
-        return """## 4. Detailed Findings
+        return """## 5. Detailed Findings
 
 No findings were identified for the supplied data.
 
 ---
 """
 
-    lines: List[str] = ["## 4. Detailed Findings", ""]
+    lines: List[str] = ["## 5. Detailed Findings", ""]
     lines.append(
         "Each finding below follows a consistent **Finding → Evidence → Impact → Recommended Action** pattern."
     )
@@ -311,7 +360,7 @@ No findings were identified for the supplied data.
 
 def build_financial_exposure_section(exposure_rows: List[ExposureRow]) -> str:
     if not exposure_rows:
-        return """## 5. Financial Exposure (Indicative)
+        return """## 6. Financial Exposure (Indicative)
 
 No exposure estimates were available from the current data extract. If required, leakage estimates can be added to this section in future runs.
 
@@ -320,7 +369,7 @@ No exposure estimates were available from the current data extract. If required,
 
     total = sum(r.amount for r in exposure_rows)
     lines = [
-        "## 5. Financial Exposure (Indicative)",
+        "## 6. Financial Exposure (Indicative)",
         "",
         f"- Number of findings with exposure estimates: {len(exposure_rows)}",
         f"- Indicative total exposure (all severities): {total:,.2f}",
@@ -336,7 +385,7 @@ No exposure estimates were available from the current data extract. If required,
 
 
 def build_limitations() -> str:
-    return """## 6. Limitations & Assumptions
+    return """## 7. Limitations & Assumptions
 
 This review is subject to the following limitations:
 
@@ -350,7 +399,7 @@ This review is subject to the following limitations:
 
 
 def build_next_steps() -> str:
-    return """## 7. Recommended Next Steps
+    return """## 8. Recommended Next Steps
 
 1. Prioritise validation of **High** severity findings.
 2. Review affected employee records and reconstruct balances where necessary.
@@ -363,7 +412,7 @@ def build_next_steps() -> str:
 
 
 def build_appendices() -> str:
-    return """## 8. Appendix A – Rule Definitions
+    return """## 9. Appendix A – Rule Definitions
 
 This review used a set of automated rules to flag potential leave and entitlement leakage. Examples include:
 
@@ -376,7 +425,7 @@ This review used a set of automated rules to flag potential leave and entitlemen
 
 ---
 
-## 9. Appendix B – Data Fields Used
+## 10. Appendix B – Data Fields Used
 
 Key fields used in this analysis include:
 
@@ -391,7 +440,7 @@ Key fields used in this analysis include:
 
 ---
 
-## 10. Appendix C – Full Findings Table
+## 11. Appendix C – Full Findings Table
 
 A complete machine-readable version of the findings is available in:
 
@@ -404,16 +453,20 @@ A complete machine-readable version of the findings is available in:
 
 def generate_leave_leakage_report(
     organisation_name: str = "Organisation not specified",
-    review_period: str = "Period not specified",
+    review_period: str | None = None,
 ) -> Path:
     """Generate outputs/report.md for the Leave & Entitlement Leakage Review."""
     findings = load_findings()
     sorted_findings = sort_findings(findings)
     exposure_rows = load_exposure_rows()
 
+    if review_period is None:
+        review_period = _derive_review_period(sorted_findings)
+
     parts = [
         build_header(organisation_name, review_period),
         build_executive_summary(sorted_findings),
+        build_data_sources_section(),
         build_scope_and_methodology(),
         build_key_findings_overview(sorted_findings),
         build_detailed_findings(sorted_findings),
