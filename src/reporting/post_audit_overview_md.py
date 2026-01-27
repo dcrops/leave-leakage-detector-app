@@ -159,7 +159,7 @@ contain full findings, evidence, and recommended actions:
   `outputs/lsl_report.html`
 
 - **Public Holiday Compliance Review**  
-  `outputs/public_holiday_report.html`
+  Provided separately from the stand-alone Public Holiday Compliance tool.
 
 These reports should be retained alongside audit documentation and management responses as part of the organisation's payroll governance records.
 

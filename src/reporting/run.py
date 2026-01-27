@@ -87,6 +87,18 @@ def main() -> int:
         page_title="Post-Audit Payroll Compliance Review",
     )
 
+    # Public Holiday report
+    ph_md = outputs / "public_holiday_compliance_report.md"
+
+    if ph_md.exists():
+        build_html_and_pdf(
+            md_path=ph_md,
+            html_path=outputs / "public_holiday_report.html",
+            pdf_path=outputs / "public_holiday_report.pdf",
+            page_title="Public Holiday Compliance Review",
+        )
+    else:
+        print("Skipping Public Holiday HTML/PDF – markdown not found in this repo's outputs/")
 
     print("Wrote outputs/combined_findings.csv")
     print("Wrote outputs/report.md / report.html")

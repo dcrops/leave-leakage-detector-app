@@ -154,7 +154,7 @@ This Pre-Audit Review is supported by the following detailed reports, which cont
   `outputs/lsl_report.html`
 
 - **Public Holiday Compliance Review**  
-  `outputs/public_holiday_report.html`
+  Provided separately from the stand-alone Public Holiday Compliance tool.
 
 These reports should be retained as supporting documentation for internal review and audit preparation.
 
