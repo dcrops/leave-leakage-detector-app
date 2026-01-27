@@ -1,8 +1,7 @@
 from __future__ import annotations
-
 from pathlib import Path
-
 from markdown import markdown
+from shutil import copyfile
 
 # Try to import WeasyPrint, but don't crash if it misbehaves (common on Windows).
 try:
@@ -17,6 +16,7 @@ except Exception as e:  # WeasyPrint can raise non-ImportError exceptions
 # ---------- Paths (defaults for the leave leakage report) ----------
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+CSS_SOURCE = BASE_DIR / "docs" / "report.css"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 
 REPORT_MD_PATH = OUTPUTS_DIR / "report.md"
@@ -31,117 +31,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <title>{title}</title>
-  <style>
-    /* Base layout */
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      margin: 0;
-      padding: 32px;
-      background: #f3f4f6;
-      color: #1f2933;
-      line-height: 1.5;
-      font-size: 11pt;
-    }}
-
-    .report-container {{
-      max-width: 900px;
-      margin: 0 auto;
-      background: #ffffff;
-      padding: 28px 32px;
-      border-radius: 10px;
-      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
-    }}
-
-    /* Headings */
-    h1, h2, h3 {{
-      margin-top: 1.6em;
-      margin-bottom: 0.6em;
-      font-weight: 600;
-      color: #111827;
-    }}
-
-    h1 {{
-      font-size: 20pt;
-      margin-top: 0;
-      border-bottom: 2px solid #e5e7eb;
-      padding-bottom: 8px;
-    }}
-
-    h2 {{
-      font-size: 14pt;
-      border-bottom: 1px solid #e5e7eb;
-      padding-bottom: 4px;
-    }}
-
-    h3 {{
-      font-size: 12pt;
-    }}
-
-    p {{
-      margin: 0.4em 0 0.9em 0;
-    }}
-
-    ul, ol {{
-      margin: 0.4em 0 0.9em 1.2em;
-    }}
-
-    /* Tables */
-    table {{
-      border-collapse: collapse;
-      width: 100%;
-      margin: 1em 0 1.4em 0;
-      font-size: 10pt;
-    }}
-
-    th, td {{
-      border: 1px solid #e5e7eb;
-      padding: 6px 8px;
-      vertical-align: top;
-    }}
-
-    th {{
-      background: #f9fafb;
-      font-weight: 600;
-    }}
-
-    /* Inline code / IDs */
-    code {{
-      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
-      font-size: 90%;
-      background: #f3f4f6;
-      padding: 1px 3px;
-      border-radius: 3px;
-    }}
-
-    /* Blockquotes / disclaimer style */
-    blockquote {{
-      margin: 0.8em 0 1.2em 0;
-      padding: 0.6em 1em;
-      border-left: 3px solid #d1d5db;
-      color: #4b5563;
-      background: #f9fafb;
-    }}
-
-    hr {{
-      border: none;
-      border-top: 1px solid #e5e7eb;
-      margin: 1.6em 0;
-    }}
-
-    /* Print tweaks */
-    @media print {{
-      body {{
-        background: #ffffff;
-        padding: 0;
-      }}
-      .report-container {{
-        box-shadow: none;
-        border-radius: 0;
-        margin: 0;
-        max-width: 100%;
-      }}
-    }}
-  </style>
+  <link rel="stylesheet" href="report.css">
 </head>
 <body>
   <div class="report-container">
@@ -171,11 +61,22 @@ def build_html_from_markdown(
 
     full_html = HTML_TEMPLATE.format(title=page_title, content=content_html)
 
+    # Ensure output folder exists
     html_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Copy shared CSS alongside the HTML so <link href="report.css"> works
+    if CSS_SOURCE.exists():
+        css_target = html_path.parent / CSS_SOURCE.name
+        try:
+            copyfile(CSS_SOURCE, css_target)
+        except OSError:
+            # Non-fatal: HTML will still work, just without custom styling
+            pass
+
+    # Write the final HTML
     html_path.write_text(full_html, encoding="utf-8")
 
     return html_path
-
 
 def html_to_pdf(
     html_path: Path,
@@ -196,8 +97,8 @@ def html_to_pdf(
             pass
         return None
 
-    html_text = html_path.read_text(encoding="utf-8")
-    HTML(string=html_text).write_pdf(str(pdf_path))
+    # Let WeasyPrint load the HTML file (and its linked CSS) from disk
+    HTML(filename=str(html_path)).write_pdf(str(pdf_path))
     return pdf_path
 
 
