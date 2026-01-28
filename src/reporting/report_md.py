@@ -288,14 +288,15 @@ The automated checks identified the following potential issues:
 
 | Severity | Count | Description |
 |---------|-------|-------------|
-| High    | {high}   | Likely compliance breach or underpayment risk |
-| Medium  | {med}   | Material risk or policy inconsistency         |
-| Low     | {low}   | Data quality or process issue                 |
+| <span class="badge-high">High</span>    | {high}   | Likely compliance breach or underpayment risk |
+| <span class="badge-medium">Medium</span>  | {med}   | Material risk or policy inconsistency         |
+| <span class="badge-low">Low</span>     | {low}   | Data quality or process issue                 |
 
 {rule_summary}
 
 ---
 """
+
 
 
 def build_detailed_findings(findings: List[Finding]) -> str:

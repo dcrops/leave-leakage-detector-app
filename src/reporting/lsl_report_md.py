@@ -369,9 +369,9 @@ The automated checks identified the following potential issues in LSL balances a
 
 | Severity | Count | Description |
 |---------|-------|-------------|
-| High    | {high}   | Likely LSL exposure or provision risk |
-| Medium  | {med}   | Material inconsistency or configuration issue |
-| Low     | {low}   | Data quality or minor process issue |
+| <span class="badge-high">High</span>    | {high}   | Likely LSL exposure or provision risk |
+| <span class="badge-medium">Medium</span>  | {med}   | Material inconsistency or configuration issue |
+| <span class="badge-low">Low</span>     | {low}   | Data quality or minor process issue |
 
 {rule_summary}
 
